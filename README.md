@@ -25,7 +25,7 @@ sandboxes, policy, logs, and cleanup operations to that workspace. Override it
 with `OPENSHELL_WORKSPACE`; Kubernetes resources remain in the shared `openshell`
 namespace, which is the appropriate workspace mode for this single-team demo.
 
-See [`openshell-sandbox-lifecycle.md`](openshell-sandbox-lifecycle.md) for a
+See [`openshell-sandbox-lifecycle.md`](docs/dev/openshell-sandbox-lifecycle.md) for a
 step-by-step explanation of how the gateway, Kubernetes driver, Agent Sandbox
 controller, supervisor, and sandbox runtime create and manage a sandbox.
 
@@ -107,6 +107,45 @@ Exit the shell and remove the sandbox when finished:
 .tools/bin/openshell sandbox delete policy-demo --workspace demo
 ```
 
+#### See the Kyverno policies in action
+
+OpenShell renders each sandbox as a Kubernetes `Sandbox` resource named
+`<workspace>--<name>`, so Kyverno admits, mutates, or denies it like any other
+workload. While the sandbox exists, inspect the defaults that Kyverno added:
+
+```sh
+kubectl --context kind-openshell -n openshell get sandbox demo--policy-demo \
+  -o jsonpath='{.spec.podTemplate.spec.containers[0].resources}'
+```
+
+Kyverno fills in any CPU, memory, or ephemeral-storage request or limit that the
+sandbox omits, so OpenShell resource flags within the bounds work:
+
+```sh
+.tools/bin/openshell sandbox create --workspace demo --name cpu-two --cpu 2 \
+  --from nicolaka/netshoot@sha256:a20c2531bf35436ed3766cd6cfe89d352b050ccc4d7005ce6400adf97503da1b \
+  --no-auto-providers --no-tty -- echo ready
+```
+
+Requests that break a policy fail with the policy message:
+
+```sh
+# Denied: A sandbox container may use at most 4 CPU, 8Gi memory, and 20Gi ephemeral storage.
+.tools/bin/openshell sandbox create --workspace demo --name cpu-eight --cpu 8 \
+  --from nicolaka/netshoot@sha256:a20c2531bf35436ed3766cd6cfe89d352b050ccc4d7005ce6400adf97503da1b \
+  --no-auto-providers --no-tty -- echo ready
+
+# Denied: Sandbox images must use immutable sha256 digest references.
+.tools/bin/openshell sandbox create --workspace demo --name mutable \
+  --from nicolaka/netshoot:v0.13 --no-auto-providers --no-tty -- echo ready
+```
+
+Remove the allowed sandbox when finished:
+
+```sh
+.tools/bin/openshell sandbox delete cpu-two --workspace demo
+```
+
 The automated walkthrough:
 
 1. port-forwards the Kubernetes gateway using mTLS;
@@ -138,7 +177,7 @@ The enforce-mode policies are under `config/kyverno/policies/`:
 
 | Policy | Control |
 | --- | --- |
-| `default-sandbox-resources` | supplies CPU, memory, and ephemeral-storage defaults when the workload omits resources |
+| `default-sandbox-resources` | supplies each missing CPU, memory, and ephemeral-storage request and limit, keeping requests at or below limits |
 | `enforce-sandbox-resource-bounds` | requires requests and limits and caps each sandbox container |
 | `enforce-sandbox-pod-security` | enforces non-root, capability-free, seccomp-confined workloads without host access |
 | `protect-sandbox-credentials` | requires provider-based credentials instead of raw Secrets or ServiceAccount tokens |

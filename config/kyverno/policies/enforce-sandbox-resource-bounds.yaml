@@ -18,28 +18,28 @@ spec:
         apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["sandboxes"]
+  variables:
+    - name: containers
+      expression: object.spec.podTemplate.spec.containers
+    - name: boundedResources
+      expression: "['cpu', 'memory', 'ephemeral-storage']"
+    - name: maxLimits
+      expression: "{'cpu': quantity('4'), 'memory': quantity('8Gi'), 'ephemeral-storage': quantity('20Gi')}"
+    - name: allResourcesDeclared
+      expression: >-
+        variables.containers.all(c, variables.boundedResources.all(r,
+          r in c.?resources.requests.orValue({}) &&
+          r in c.?resources.limits.orValue({})))
   validations:
-    - expression: >-
-        object.spec.podTemplate.spec.containers.all(c,
-          has(c.resources) &&
-          has(c.resources.requests) &&
-          has(c.resources.limits) &&
-          'cpu' in c.resources.requests &&
-          'memory' in c.resources.requests &&
-          'ephemeral-storage' in c.resources.requests &&
-          'cpu' in c.resources.limits &&
-          'memory' in c.resources.limits &&
-          'ephemeral-storage' in c.resources.limits)
+    - expression: variables.allResourcesDeclared
       message: Every sandbox container must declare CPU, memory, and ephemeral-storage requests and limits.
     - expression: >-
-        object.spec.podTemplate.spec.containers.all(c,
-          quantity(c.resources.requests['cpu']).compareTo(quantity(c.resources.limits['cpu'])) <= 0 &&
-          quantity(c.resources.requests['memory']).compareTo(quantity(c.resources.limits['memory'])) <= 0 &&
-          quantity(c.resources.requests['ephemeral-storage']).compareTo(quantity(c.resources.limits['ephemeral-storage'])) <= 0)
+        !variables.allResourcesDeclared ||
+        variables.containers.all(c, variables.boundedResources.all(r,
+          !quantity(c.resources.requests[r]).isGreaterThan(quantity(c.resources.limits[r]))))
       message: Sandbox resource requests may not exceed their limits.
     - expression: >-
-        object.spec.podTemplate.spec.containers.all(c,
-          quantity(c.resources.limits['cpu']).compareTo(quantity('4')) <= 0 &&
-          quantity(c.resources.limits['memory']).compareTo(quantity('8Gi')) <= 0 &&
-          quantity(c.resources.limits['ephemeral-storage']).compareTo(quantity('20Gi')) <= 0)
+        !variables.allResourcesDeclared ||
+        variables.containers.all(c, variables.boundedResources.all(r,
+          !quantity(c.resources.limits[r]).isGreaterThan(variables.maxLimits[r])))
       message: A sandbox container may use at most 4 CPU, 8Gi memory, and 20Gi ephemeral storage.

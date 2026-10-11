@@ -15,17 +15,47 @@ spec:
         apiVersions: ["v1beta1"]
         operations: ["CREATE"]
         resources: ["sandboxes"]
+  variables:
+    - name: containerIndexes
+      expression: lists.range(object.spec.podTemplate.spec.containers.size())
+    - name: defaultResources
+      expression: >-
+        {
+          "requests": {"cpu": "100m", "memory": "128Mi", "ephemeral-storage": "256Mi"},
+          "limits": {"cpu": "1", "memory": "1Gi", "ephemeral-storage": "2Gi"}
+        }
   mutations:
+    # Create empty resources, requests, and limits maps where they are missing.
     - patchType: JSONPatch
       jsonPatch:
         expression: >-
-          has(object.spec.podTemplate.spec.containers[0].resources)
-          ? []
-          : [JSONPatch{
-              op: "add",
-              path: "/spec/podTemplate/spec/containers/0/resources",
-              value: {
-                "requests": {"cpu": "100m", "memory": "128Mi", "ephemeral-storage": "256Mi"},
-                "limits": {"cpu": "1", "memory": "1Gi", "ephemeral-storage": "2Gi"}
-              }
-            }]
+          variables.containerIndexes.map(i, [
+            object.spec.podTemplate.spec.containers[i].?resources.hasValue() ? [] :
+              [JSONPatch{op: "add", path: "/spec/podTemplate/spec/containers/" + string(i) + "/resources", value: {}}],
+            ["requests", "limits"]
+              .filter(kind, !object.spec.podTemplate.spec.containers[i].?resources[?kind].hasValue())
+              .map(kind, JSONPatch{op: "add", path: "/spec/podTemplate/spec/containers/" + string(i) + "/resources/" + kind, value: {}})
+          ].flatten()).flatten()
+    # Default each missing request and limit, keeping requests at or below limits.
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          variables.containerIndexes.map(i,
+            cel.bind(resources, object.spec.podTemplate.spec.containers[i].resources,
+              ["requests", "limits"].map(kind,
+                variables.defaultResources[kind].map(name, name)
+                  .filter(name, !(name in resources[kind]))
+                  .map(name, JSONPatch{
+                    op: "add",
+                    path: "/spec/podTemplate/spec/containers/" + string(i) + "/resources/" + kind + "/" + name,
+                    value: kind == "requests"
+                      ? (name in resources.limits &&
+                          quantity(string(resources.limits[name])).isLessThan(quantity(variables.defaultResources.requests[name]))
+                            ? resources.limits[name] : variables.defaultResources.requests[name])
+                      : (name in resources.requests &&
+                          quantity(string(resources.requests[name])).isGreaterThan(quantity(variables.defaultResources.limits[name]))
+                            ? resources.requests[name] : variables.defaultResources.limits[name])
+                  })
+              ).flatten()
+            )
+          ).flatten()

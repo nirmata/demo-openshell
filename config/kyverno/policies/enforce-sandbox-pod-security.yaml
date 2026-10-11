@@ -18,40 +18,30 @@ spec:
         apiVersions: ["v1beta1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["sandboxes"]
+  variables:
+    - name: podSpec
+      expression: object.spec.podTemplate.spec
+    - name: allContainers
+      expression: >-
+        variables.podSpec.containers +
+        variables.podSpec.?initContainers.orValue([]) +
+        variables.podSpec.?ephemeralContainers.orValue([])
+    - name: hostNamespaceFields
+      expression: "['hostNetwork', 'hostPID', 'hostIPC', 'shareProcessNamespace']"
   validations:
-    - expression: >-
-        !object.spec.podTemplate.spec.?hostNetwork.orValue(false) &&
-        !object.spec.podTemplate.spec.?hostPID.orValue(false) &&
-        !object.spec.podTemplate.spec.?hostIPC.orValue(false) &&
-        !object.spec.podTemplate.spec.?shareProcessNamespace.orValue(false)
+    - expression: "!variables.hostNamespaceFields.exists(f, variables.podSpec[?f].orValue(false))"
       message: Sandbox workloads may not join host namespaces or share a process namespace.
-    - expression: object.spec.podTemplate.spec.?automountServiceAccountToken.orValue(true) == false
+    - expression: "!variables.podSpec.?automountServiceAccountToken.orValue(true)"
       message: Sandbox workloads may not mount a Kubernetes ServiceAccount token.
-    - expression: >-
-        object.spec.podTemplate.spec.?volumes.orValue([]).all(v,
-          !has(v.hostPath) &&
-          !has(v.gitRepo))
+    - expression: variables.podSpec.?volumes.orValue([]).all(v, !has(v.hostPath) && !has(v.gitRepo))
       message: Sandbox workloads may not use hostPath or gitRepo volumes.
     - expression: >-
-        object.spec.podTemplate.spec.containers.all(c,
-          has(c.securityContext) &&
-          c.securityContext.?runAsNonRoot.orValue(false) &&
-          !c.securityContext.?allowPrivilegeEscalation.orValue(true) &&
-          !c.securityContext.?privileged.orValue(false) &&
-          c.securityContext.?capabilities.orValue(null) != null &&
-          c.securityContext.capabilities.?drop.orValue([]).exists(x, x == 'ALL') &&
-          c.securityContext.capabilities.?add.orValue([]).size() == 0) &&
-        object.spec.podTemplate.spec.?initContainers.orValue([]).all(c,
-          has(c.securityContext) &&
-          c.securityContext.?runAsNonRoot.orValue(false) &&
-          !c.securityContext.?allowPrivilegeEscalation.orValue(true) &&
-          !c.securityContext.?privileged.orValue(false) &&
-          c.securityContext.?capabilities.orValue(null) != null &&
-          c.securityContext.capabilities.?drop.orValue([]).exists(x, x == 'ALL') &&
-          c.securityContext.capabilities.?add.orValue([]).size() == 0)
+        variables.allContainers.all(c,
+          c.?securityContext.runAsNonRoot.orValue(false) &&
+          !c.?securityContext.allowPrivilegeEscalation.orValue(true) &&
+          !c.?securityContext.privileged.orValue(false) &&
+          'ALL' in c.?securityContext.capabilities.drop.orValue([]) &&
+          c.?securityContext.capabilities.add.orValue([]).size() == 0)
       message: Every sandbox container must run as non-root, drop all capabilities, and disable privilege escalation.
-    - expression: >-
-        has(object.spec.podTemplate.spec.securityContext) &&
-        has(object.spec.podTemplate.spec.securityContext.seccompProfile) &&
-        object.spec.podTemplate.spec.securityContext.seccompProfile.type == 'RuntimeDefault'
+    - expression: variables.podSpec.?securityContext.seccompProfile.type.orValue('') == 'RuntimeDefault'
       message: Sandbox workloads must use the RuntimeDefault seccomp profile.
