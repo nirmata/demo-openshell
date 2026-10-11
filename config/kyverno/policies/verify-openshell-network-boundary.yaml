@@ -19,23 +19,31 @@ spec:
         operations: ["CREATE", "UPDATE"]
         resources: ["networkpolicies"]
         resourceNames: ["openshell-sandbox-workloads"]
+  variables:
+    - name: boundaryRoleLabel
+      expression: "'openshell.ai/boundary-role'"
+    - name: policyTypes
+      expression: object.spec.?policyTypes.orValue([])
+    - name: ingressRules
+      expression: object.spec.?ingress.orValue([])
+    - name: ingressSources
+      expression: "variables.ingressRules.size() == 1 ? variables.ingressRules[0].?from.orValue([]) : []"
+    - name: ingressPorts
+      expression: "variables.ingressRules.size() == 1 ? variables.ingressRules[0].?ports.orValue([]) : []"
   validations:
     - expression: >-
-        has(object.spec.podSelector.matchLabels) &&
-        object.spec.podSelector.matchLabels['openshell.ai/boundary-role'] == 'workload'
+        object.spec.podSelector.?matchLabels[?variables.boundaryRoleLabel].orValue('') == 'workload'
       message: The workload fence must select only OpenShell workload Pods.
     - expression: >-
-        object.spec.policyTypes.exists(x, x == 'Ingress') &&
-        object.spec.policyTypes.exists(x, x == 'Egress') &&
+        'Ingress' in variables.policyTypes &&
+        'Egress' in variables.policyTypes &&
         object.spec.?egress.orValue([]).size() == 0
       message: The workload fence must isolate both ingress and egress and may not allow direct workload egress.
     - expression: >-
-        object.spec.?ingress.orValue([]).size() == 1 &&
-        object.spec.ingress[0].?from.orValue([]).size() == 1 &&
-        has(object.spec.ingress[0].from[0].podSelector) &&
-        has(object.spec.ingress[0].from[0].podSelector.matchLabels) &&
-        object.spec.ingress[0].from[0].podSelector.matchLabels['openshell.ai/boundary-role'] == 'supervisor' &&
-        object.spec.ingress[0].?ports.orValue([]).size() == 1 &&
-        object.spec.ingress[0].ports[0].port == 5500 &&
-        object.spec.ingress[0].ports[0].?protocol.orValue('TCP') == 'TCP'
+        variables.ingressRules.size() == 1 &&
+        variables.ingressSources.size() == 1 &&
+        variables.ingressSources[0].?podSelector.matchLabels[?variables.boundaryRoleLabel].orValue('') == 'supervisor' &&
+        variables.ingressPorts.size() == 1 &&
+        variables.ingressPorts[0].?port.orValue(0) == 5500 &&
+        variables.ingressPorts[0].?protocol.orValue('TCP') == 'TCP'
       message: Workload ingress must come only from OpenShell supervisors on TCP port 5500.
