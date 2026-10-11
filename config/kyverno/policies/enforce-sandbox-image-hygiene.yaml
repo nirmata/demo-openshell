@@ -1,0 +1,27 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: enforce-sandbox-image-hygiene
+  annotations:
+    policies.kyverno.io/title: Enforce Sandbox Image Hygiene
+    policies.kyverno.io/category: OpenShell Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Sandbox
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["agents.x-k8s.io"]
+        apiVersions: ["v1beta1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["sandboxes"]
+  validations:
+    - expression: >-
+        object.spec.podTemplate.spec.containers.all(c,
+          c.image.matches('^.+@sha256:[0-9a-f]{64}$')) &&
+        object.spec.podTemplate.spec.?initContainers.orValue([]).all(c,
+          c.image.matches('^.+@sha256:[0-9a-f]{64}$'))
+      message: Sandbox images must use immutable sha256 digest references.

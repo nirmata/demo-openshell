@@ -1,0 +1,35 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-openshell-rbac
+  annotations:
+    policies.kyverno.io/title: Restrict OpenShell RBAC
+    policies.kyverno.io/category: OpenShell RBAC
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Role, ClusterRole
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["roles", "clusterroles"]
+  matchConditions:
+    - name: openshell-role
+      expression: object.metadata.name.startsWith('openshell-')
+  validations:
+    - expression: >-
+        object.?rules.orValue([]).all(r,
+          r.?apiGroups.orValue([]).all(x, x != '*') &&
+          r.?resources.orValue([]).all(x, x != '*') &&
+          r.?verbs.orValue([]).all(x, x != '*') &&
+          r.?nonResourceURLs.orValue([]).all(x, x != '*'))
+      message: OpenShell RBAC rules may not contain wildcards.
+    - expression: >-
+        object.?rules.orValue([]).all(r,
+          r.?verbs.orValue([]).all(x, !(x in ['bind', 'escalate', 'impersonate'])))
+      message: OpenShell RBAC rules may not grant bind, escalate, or impersonate.

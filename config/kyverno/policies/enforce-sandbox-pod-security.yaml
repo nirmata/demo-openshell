@@ -1,0 +1,57 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: enforce-sandbox-pod-security
+  annotations:
+    policies.kyverno.io/title: Enforce Sandbox Pod Security
+    policies.kyverno.io/category: OpenShell Pod Security
+    policies.kyverno.io/severity: critical
+    policies.kyverno.io/subject: Sandbox
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["agents.x-k8s.io"]
+        apiVersions: ["v1beta1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["sandboxes"]
+  validations:
+    - expression: >-
+        !object.spec.podTemplate.spec.?hostNetwork.orValue(false) &&
+        !object.spec.podTemplate.spec.?hostPID.orValue(false) &&
+        !object.spec.podTemplate.spec.?hostIPC.orValue(false) &&
+        !object.spec.podTemplate.spec.?shareProcessNamespace.orValue(false)
+      message: Sandbox workloads may not join host namespaces or share a process namespace.
+    - expression: object.spec.podTemplate.spec.?automountServiceAccountToken.orValue(true) == false
+      message: Sandbox workloads may not mount a Kubernetes ServiceAccount token.
+    - expression: >-
+        object.spec.podTemplate.spec.?volumes.orValue([]).all(v,
+          !has(v.hostPath) &&
+          !has(v.gitRepo))
+      message: Sandbox workloads may not use hostPath or gitRepo volumes.
+    - expression: >-
+        object.spec.podTemplate.spec.containers.all(c,
+          has(c.securityContext) &&
+          c.securityContext.?runAsNonRoot.orValue(false) &&
+          !c.securityContext.?allowPrivilegeEscalation.orValue(true) &&
+          !c.securityContext.?privileged.orValue(false) &&
+          c.securityContext.?capabilities.orValue(null) != null &&
+          c.securityContext.capabilities.?drop.orValue([]).exists(x, x == 'ALL') &&
+          c.securityContext.capabilities.?add.orValue([]).size() == 0) &&
+        object.spec.podTemplate.spec.?initContainers.orValue([]).all(c,
+          has(c.securityContext) &&
+          c.securityContext.?runAsNonRoot.orValue(false) &&
+          !c.securityContext.?allowPrivilegeEscalation.orValue(true) &&
+          !c.securityContext.?privileged.orValue(false) &&
+          c.securityContext.?capabilities.orValue(null) != null &&
+          c.securityContext.capabilities.?drop.orValue([]).exists(x, x == 'ALL') &&
+          c.securityContext.capabilities.?add.orValue([]).size() == 0)
+      message: Every sandbox container must run as non-root, drop all capabilities, and disable privilege escalation.
+    - expression: >-
+        has(object.spec.podTemplate.spec.securityContext) &&
+        has(object.spec.podTemplate.spec.securityContext.seccompProfile) &&
+        object.spec.podTemplate.spec.securityContext.seccompProfile.type == 'RuntimeDefault'
+      message: Sandbox workloads must use the RuntimeDefault seccomp profile.

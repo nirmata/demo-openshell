@@ -1,0 +1,41 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: verify-openshell-network-boundary
+  annotations:
+    policies.kyverno.io/title: Verify OpenShell Network Boundary
+    policies.kyverno.io/category: OpenShell Network
+    policies.kyverno.io/severity: critical
+    policies.kyverno.io/subject: NetworkPolicy
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["networkpolicies"]
+        resourceNames: ["openshell-sandbox-workloads"]
+  validations:
+    - expression: >-
+        has(object.spec.podSelector.matchLabels) &&
+        object.spec.podSelector.matchLabels['openshell.ai/boundary-role'] == 'workload'
+      message: The workload fence must select only OpenShell workload Pods.
+    - expression: >-
+        object.spec.policyTypes.exists(x, x == 'Ingress') &&
+        object.spec.policyTypes.exists(x, x == 'Egress') &&
+        object.spec.?egress.orValue([]).size() == 0
+      message: The workload fence must isolate both ingress and egress and may not allow direct workload egress.
+    - expression: >-
+        object.spec.?ingress.orValue([]).size() == 1 &&
+        object.spec.ingress[0].?from.orValue([]).size() == 1 &&
+        has(object.spec.ingress[0].from[0].podSelector) &&
+        has(object.spec.ingress[0].from[0].podSelector.matchLabels) &&
+        object.spec.ingress[0].from[0].podSelector.matchLabels['openshell.ai/boundary-role'] == 'supervisor' &&
+        object.spec.ingress[0].?ports.orValue([]).size() == 1 &&
+        object.spec.ingress[0].ports[0].port == 5500 &&
+        object.spec.ingress[0].ports[0].?protocol.orValue('TCP') == 'TCP'
+      message: Workload ingress must come only from OpenShell supervisors on TCP port 5500.
